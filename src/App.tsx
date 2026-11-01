@@ -8,7 +8,7 @@ function ProductLanding() {
       name="PlanLens"
       icon="schema"
       tagline="Spark / Databricks plan analyzer"
-      headline="The Spark UI serverless forgot"
+      headline="*The Spark UI* serverless forgot"
       support="Paste Dataset.explain() / physical plan text. Flag missed broadcast joins, skew, pandas UDFs, and compare two plans side by side."
       audience="For Databricks and Spark engineers debugging expensive jobs."
       features={[
