@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="Spark / Databricks plan analyzer" />
+    <title>PlanLens</title>
+    <meta name="description" content="Spark / Databricks plan analyzer" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23445e91'/><path d='M8 22V10h3l4 8 4-8h3v12h-2.5v-7.5L16.2 22h-1.4l-3.3-7.5V22H8z' fill='%23fff'/></svg>" />
+    <script>
+      document.documentElement.dataset.theme =
+        localStorage.getItem('theme') ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
