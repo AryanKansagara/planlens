@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/landing.tsx","./src/shell.tsx","./src/tool.tsx","./src/main.tsx","./src/plan.ts","./src/router.tsx","./src/samples.ts"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/landing.tsx","./src/shell.tsx","./src/themechrome.tsx","./src/tool.tsx","./src/icons.ts","./src/main.tsx","./src/plan.ts","./src/router.tsx","./src/samples.ts","./src/thememode.ts"],"version":"5.9.3"}
