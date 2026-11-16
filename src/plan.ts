@@ -133,7 +133,8 @@ export function fmtBytes(n: number): string {
   if (!Number.isFinite(n)) return '-'
   const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB', 'EiB']
   let i = 0
-  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++ }
+  // Step up when rounding would print 1024.0 of the smaller unit.
+  while ((i === 0 ? n >= 1024 : n >= 1023.95) && i < units.length - 1) { n /= 1024; i++ }
   return `${i === 0 ? n : n.toFixed(1)} ${units[i]}`
 }
 
@@ -148,8 +149,8 @@ export function fmtCount(n: number): string {
   if (n < 1000) return String(n)
   const units = ['K', 'M', 'B', 'T']
   let i = -1
-  while (n >= 1000 && i < units.length - 1) { n /= 1000; i++ }
-  return `${n.toFixed(n < 10 ? 2 : 1)}${units[i]}`
+  while (n >= 999.95 && i < units.length - 1) { n /= 1000; i++ }
+  return `${n.toFixed(n < 9.995 ? 2 : 1)}${units[i]}`
 }
 
 export function fmtMetric(m: Metric): string {
@@ -186,7 +187,7 @@ export function buildNode(content: string, ctx: Ctx, formatted = false): PlanNod
 
   const cg = /^\*\((\d+)\) /.exec(s)
   if (cg) { node.codegen = +cg[1]; s = s.slice(cg[0].length) }
-  else if (s.startsWith('* ')) { node.codegen = 0; s = s.slice(2) }
+  else if (/^\* ?[A-Z]/.test(s)) { node.codegen = 0; s = s.slice(s[1] === ' ' ? 2 : 1) }
 
   const statIdx = s.search(/,? ?Statistics\(sizeInBytes=/)
   if (statIdx >= 0) { node.stats = parseStats(s.slice(statIdx)); s = s.slice(0, statIdx) }
@@ -248,6 +249,11 @@ function parseJoinArgs(args: string, attrs: Record<string, string>) {
 
 /** Fill in derived attributes once all details are known. */
 function finish(n: PlanNode) {
+  // An "Initial Plan" with no "Final Plan" next to it is the only plan there is, so don't hide it.
+  const hdr = (x: PlanNode, t: string) => x.category === 'header' && x.name === t
+  if (n.children.some((c) => hdr(c, 'Initial Plan')) && !n.children.some((c) => hdr(c, 'Final Plan'))) {
+    n.children = n.children.flatMap((c) => (hdr(c, 'Initial Plan') ? c.children : [c]))
+  }
   if (n.category === 'exchange' || n.category === 'broadcast') {
     const a = n.attrs.Arguments ?? ''
     if (!n.attrs.Partitioning && /^Exchange|ShuffleExchange/.test(n.name) && a) n.attrs.Partitioning = splitTop(a)[0]
@@ -329,15 +335,31 @@ function parseFormatted(lines: string[], ctx: Ctx): PlanNode | undefined {
   return root
 }
 
+/** Undo the wrapping that consoles add around EXPLAIN output: spark-sql / show() table borders,
+ *  "| " cell prefixes, a shared indent, and anything typed before the first "== ... ==" header. */
+export function cleanInput(input: string): string[] {
+  let lines = input.replace(/\r\n?/g, '\n').replace(/\t/g, '    ').split('\n')
+    .filter((l) => !/^\s*\+-{3,}\+?\s*$/.test(l) && !/^\s*\|\s*plan\s*\|\s*$/.test(l) && !/^\s*```/.test(l))
+    .map((l) => l.replace(/^\s*\| ?/, '').replace(/\s*\|\s*$/, ''))
+  const first = lines.findIndex((l) => /^\s*== .+ ==\s*$/.test(l))
+  if (first > 0) lines = lines.slice(first)
+  return lines
+}
+
+const dedent = (lines: string[]) => {
+  const ind = Math.min(...lines.filter((l) => l.trim()).map((l) => /^ */.exec(l)![0].length))
+  return Number.isFinite(ind) && ind > 0 ? lines.map((l) => l.slice(Math.min(ind, /^ */.exec(l)![0].length))) : lines
+}
+
 export function parsePlan(input: string): ParsedPlan {
-  const lines = input.replace(/\r\n?/g, '\n').split('\n')
+  const lines = cleanInput(input)
   const raw: { title: string; lines: string[] }[] = []
   let cur: { title: string; lines: string[] } = { title: 'Physical Plan', lines: [] }
   let sawHeader = false
   for (const l of lines) {
-    const m = /^== (.+) ==\s*$/.exec(l)
+    const m = /^\s*== (.+) ==\s*$/.exec(l)
     if (m) {
-      if (sawHeader || !lines.some((x) => /^== .+ ==\s*$/.test(x))) raw.push(cur)
+      if (sawHeader || !lines.some((x) => /^\s*== .+ ==\s*$/.test(x))) raw.push(cur)
       sawHeader = true
       cur = { title: m[1], lines: [] }
     } else cur.lines.push(l)
@@ -348,7 +370,7 @@ export function parsePlan(input: string): ParsedPlan {
   const sections: PlanSection[] = []
   let formatted = false
   for (const r of raw.filter((x) => x.lines.some((l) => l.trim()))) {
-    let body = r.lines.filter((l, i) => i > 0 || l.trim())
+    let body = dedent(r.lines.filter((l, i) => i > 0 || l.trim()))
     while (body.length && !body[0].trim()) body = body.slice(1)
     // The analyzed plan is preceded by its output schema line, e.g. "sum(DISTINCT val): bigint".
     if (r.title === 'Analyzed Logical Plan' && body.length > 1 && !/^[+:]- /.test(body[1].trim())) body = body.slice(1)
@@ -358,7 +380,7 @@ export function parsePlan(input: string): ParsedPlan {
     if (root) { finish(root); sections.push({ title: r.title, root }) }
   }
   const physical = (sections.find((s) => s.title === 'Physical Plan') ?? sections[0])?.root
-  if (!physical) throw new Error('No plan found. Paste the output of df.explain(...), EXPLAIN [EXTENDED|FORMATTED|COST] <query>, or a Spark event log.')
+  if (!physical) throw new Error('No plan found. Paste the output of df.explain(...), EXPLAIN [EXTENDED|FORMATTED|COST] <query>, or spark.sql("EXPLAIN ...").show(truncate=False).')
   let known = 0
   walk(physical, (n) => { if (n.category !== 'other' && n.category !== 'header') known++ })
   if (!known && !/[+:]- /.test(input)) throw new Error('This does not look like a Spark plan: no known operators (Scan, Filter, Join, Exchange, ...) were found.')
@@ -385,7 +407,7 @@ function all(root: PlanNode, pred: (n: PlanNode) => boolean): PlanNode[] {
 
 const isShuffle = (n: PlanNode) => n.category === 'exchange' && /Exchange/.test(n.name) && !/Reused|Source/.test(n.name)
 const isBroadcast = (n: PlanNode) => n.category === 'broadcast' && /BroadcastExchange/.test(n.name)
-const isScan = (n: PlanNode) => /^(File)?Scan [a-z]/.test(n.name) && n.table !== undefined
+const isScan = (n: PlanNode) => /^(File|Photon)?Scan [a-z]/.test(n.name) && n.table !== undefined
 
 export interface Summary {
   operators: number
@@ -492,7 +514,7 @@ export function analyze(plan: { physical: PlanNode; logical?: PlanNode }): Findi
       add({
         id: `smj-small:${j.key}`, severity: 'warn', nodes: [j.key, ...small.side.children.map((c) => c.key)],
         title: `SortMergeJoin with a small side (~${fmtBytes(small.size)}, ${t}): broadcast it`,
-        detail: `One input is estimated at ${fmtBytes(small.size)}, yet both sides are shuffled and sorted. A broadcast hash join ships the small side to every executor and avoids shuffling the large side entirely. Spark only broadcasts automatically below spark.sql.autoBroadcastJoinThreshold (10 MB by default; -1 disables it) and when statistics are fresh. AQE can still switch to a broadcast join at runtime, but only after the shuffle has been written.`,
+        detail: `One input is estimated at ${fmtBytes(small.size)}, yet both sides are shuffled and sorted. A broadcast hash join ships the small side to every executor and avoids shuffling the large side entirely. Spark only broadcasts automatically below spark.sql.autoBroadcastJoinThreshold (10 MB by default; -1 disables it) and when statistics are fresh. AQE can still switch to a broadcast join at runtime (on Databricks up to spark.databricks.adaptive.autoBroadcastJoinThreshold, 30 MB by default), but only after the shuffle has been written.`,
         fix: `-- SQL (works on serverless)\nSELECT /*+ BROADCAST(${t}) */ ...\nFROM fact JOIN ${t} ON ...\n\n# PySpark\nfrom pyspark.sql.functions import broadcast\nfact.join(broadcast(${t}_df), "key")\n\n-- Classic compute / OSS: raise the threshold or refresh stats\nSET spark.sql.autoBroadcastJoinThreshold = 64MB;\nANALYZE TABLE ${t} COMPUTE STATISTICS;`,
         doc: DOCS.hints,
       })
@@ -545,7 +567,7 @@ export function analyze(plan: { physical: PlanNode; logical?: PlanNode }): Findi
   }
 
   // Filters directly above a scan that were not pushed into it
-  for (const f of all(root, (n) => /^Filter$/.test(n.name))) {
+  for (const f of all(root, (n) => /^(Photon)?Filter$/.test(n.name))) {
     let below = f.children[0]
     while (below && below.children.length === 1 && !isScan(below) && ['filter', 'python', 'other'].includes(below.category)) below = below.children[0]
     if (!below || !isScan(below)) continue
