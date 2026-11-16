@@ -369,7 +369,7 @@ th, td { padding: 10px 12px; border-bottom: 1px solid var(--md-sys-color-outline
 .badge.good { background: var(--md-sys-color-success-container); color: var(--md-sys-color-on-success-container); }
 .badge.warn { background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); }
 .badge.bad { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
-.badge.info { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+.badge.info { background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface-variant); }
 
 .bar {
   height: 8px;
@@ -416,7 +416,7 @@ th, td { padding: 10px 12px; border-bottom: 1px solid var(--md-sys-color-outline
 .finding.bad { border-left-color: var(--md-sys-color-error); }
 .finding.warn { border-left-color: var(--md-sys-color-warning); }
 .finding.good { border-left-color: var(--md-sys-color-success); }
-.finding.info { border-left-color: var(--md-sys-color-primary); }
+.finding.info { border-left-color: var(--md-sys-color-outline); }
 
 h2 { font-size: 22px; font-weight: 400; margin: 0 0 12px; letter-spacing: 0; }
 h3 { font-size: 16px; font-weight: 500; margin: 0 0 8px; }
@@ -710,3 +710,7 @@ section { margin: 20px 0; }
 }
 
 .tool-back-wrap { margin: 8px 0 0; }
+
+.panel { overflow-wrap: break-word; }
+.tree .meta { overflow-wrap: anywhere; }
+.privacy { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; font-size: 13.5px; }

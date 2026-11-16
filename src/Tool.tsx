@@ -390,7 +390,7 @@ export default function Tool() {
       <section className="hero">
         <h1>See what your Spark plan is really doing</h1>
         <p>
-          Paste <code>df.explain()</code>, <code>Dataset.explain</code>, or <code>EXPLAIN [EXTENDED|COST|FORMATTED]</code> output.
+          Paste <code>df.explain()</code>, <code>Dataset.explain</code>, or <code>EXPLAIN [EXTENDED|COST|FORMATTED]</code> output, including spark-sql / <code>show()</code> tables and Databricks Photon plans.
           PlanLens parses the tree, flags shuffle and scan issues, and can diff two plans side by side.
         </p>
         <div className="privacy">
@@ -417,7 +417,7 @@ export default function Tool() {
         </div>
 
         <div style={{ marginBottom: 14 }}>
-          <div className="muted" style={{ fontSize: 13, marginBottom: 8 }}>Samples</div>
+          <div className="muted" style={{ fontSize: 13, marginBottom: 8 }}>Samples (synthetic unless marked real)</div>
           <div className="row">
             {SAMPLES.map((s) => (
               <button
