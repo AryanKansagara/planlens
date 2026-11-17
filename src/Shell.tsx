@@ -17,7 +17,7 @@ export function Shell({ name, tagline, children }: { name: string; tagline: stri
       </header>
       <main className="container">{children}</main>
       <footer className="container footer muted">
-        Built by <a href="https://github.com/AryanKansagara">Aryan Kansagara</a>. Independent project, not affiliated with the vendor. <a href="/docs">Docs</a>
+        Built by <a href="https://github.com/AryanKansagara">Aryan Kansagara</a>. <a href="/docs">Docs</a>
       </footer>
     </>
   )
