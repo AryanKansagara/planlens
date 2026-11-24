@@ -249,9 +249,10 @@ function parseJoinArgs(args: string, attrs: Record<string, string>) {
 
 /** Fill in derived attributes once all details are known. */
 function finish(n: PlanNode) {
-  // An "Initial Plan" with no "Final Plan" next to it is the only plan there is, so don't hide it.
+  // An "Initial Plan" with no "Final Plan" (finished) or "Current Plan" (still running, and not empty) next to it is
+  // the only plan there is, so don't hide it. Next to either of those it never ran, and walk()/summarize() skip it.
   const hdr = (x: PlanNode, t: string) => x.category === 'header' && x.name === t
-  if (n.children.some((c) => hdr(c, 'Initial Plan')) && !n.children.some((c) => hdr(c, 'Final Plan'))) {
+  if (n.children.some((c) => hdr(c, 'Initial Plan')) && !n.children.some((c) => hdr(c, 'Final Plan') || (hdr(c, 'Current Plan') && c.children.length))) {
     n.children = n.children.flatMap((c) => (hdr(c, 'Initial Plan') ? c.children : [c]))
   }
   if (n.category === 'exchange' || n.category === 'broadcast') {
