@@ -243,6 +243,9 @@ for (const [name, text] of [
   ['only a section header', '== Physical Plan ==\n'],
   ['a header cut off mid-word', '== Physical Pla'],
   ['one operator cut off after two characters', '== Physical Plan ==\n*(1) Fil'],
+  // https://github.com/AryanKansagara/planlens/issues/2: tree markers alone do not make text a plan.
+  ['a list written with "+- " markers', 'Shopping list:\n+- eggs\n+- milk\n   +- 2% fat\n'],
+  ['a plan header over prose with a "+- " line', '== Physical Plan ==\nLorem ipsum dolor\n+- sit amet\n'],
 ] as const) {
   test(`${name} is rejected with a message and no analysis`, async ({ page }) => {
     await openWith(page, text)
@@ -277,14 +280,6 @@ test('after a rejected paste, a real plan recovers and "Clear A" resets the page
   await page.getByRole('button', { name: 'Clear A' }).click()
   await expect(page.getByRole('tab')).toHaveCount(0)
   await expect(page.getByText('Paste a plan or pick a sample to get started.')).toBeVisible()
-})
-
-// https://github.com/AryanKansagara/planlens/issues/2
-test('known bug #2: unrelated text that contains "+- " lines is rejected instead of shown as a clean plan', async ({ page }) => {
-  test.fail()
-  await openWith(page, 'Shopping list:\n+- eggs\n+- milk\n   +- 2% fat\n')
-  await expect(errorBadge(page)).toHaveText(NOT_A_PLAN)
-  await expect(page.getByText('No issues flagged')).toHaveCount(0)
 })
 
 // https://github.com/AryanKansagara/planlens/issues/3
