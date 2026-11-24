@@ -289,17 +289,52 @@ test('known bug #2: unrelated text that contains "+- " lines is rejected instead
 
 // https://github.com/AryanKansagara/planlens/issues/3
 const MISSED = SAMPLES.find((s) => s.id === 'missed-broadcast')!.text
-test('known bug #3: a plan cut off before its physical plan is not reported as having no problems', async ({ page }) => {
-  test.fail()
+const TRUNCATED = 'Plan looks truncated: the analysis is partial'
+const cutAt = (text: string, bytes: number) => Buffer.from(text).subarray(0, bytes).toString()
+
+test('a plan cut off before its physical plan is not reported as having no problems', async ({ page }) => {
   await openWith(page, MISSED.slice(0, 300))
+  await expect(parsedAs(page)).toContainText('Looks truncated')
   await expect(page.getByText('No issues flagged')).toHaveCount(0)
+  // The top finding on the overview says what is wrong.
+  await expect(page.locator('.finding').first()).toContainText(TRUNCATED)
+  await expect(page.locator('.finding').first()).toContainText('no "== Physical Plan ==" section')
+  await expect(page.locator('.finding').first()).toContainText('ends in the middle of a line')
+  await tab(page, /^Findings/).click()
+  expect(await findingTitles(page)).toEqual([TRUNCATED])
 })
 
-test('known bug #3: a plan cut off inside a scan does not claim the table has no partition pruning', async ({ page }) => {
-  test.fail()
+test('a plan cut off inside a scan does not claim the table has no partition pruning', async ({ page }) => {
   await openWith(page, MISSED.slice(0, 700))
+  await expect(parsedAs(page)).toContainText('Looks truncated')
   await tab(page, /^Findings/).click()
-  expect((await findingTitles(page)).join('\n')).not.toMatch(/No partition pruning/)
+  const titles = await findingTitles(page)
+  expect(titles.join('\n')).not.toMatch(/No partition pruning/)
+  expect(titles).toEqual([TRUNCATED])
+  await expect(page.locator('.finding').first()).toContainText('cut off before ReadSchema')
+})
+
+test('a formatted plan cut off inside its operator details does not claim a partition is unpruned', async ({ page }) => {
+  await openWith(page, cutAt(tpcdsQ3, 2800))
+  await expect(parsedAs(page)).toContainText('Looks truncated')
+  await tab(page, /^Findings/).click()
+  const titles = await findingTitles(page)
+  expect(titles[0]).toBe(TRUNCATED)
+  expect(titles.join('\n')).not.toMatch(/No partition pruning/)
+  await expect(page.locator('.finding').first()).toContainText('details of 11 operators are missing')
+})
+
+test('a formatted plan cut off inside its last line is flagged, and the complete plan is not', async ({ page }) => {
+  await openWith(page, cutAt(tpcdsQ3, 5150))
+  await expect(parsedAs(page)).toContainText('Looks truncated')
+  await expect(page.getByText('No issues flagged')).toHaveCount(0)
+  await tab(page, /^Findings/).click()
+  expect((await findingTitles(page))[0]).toBe(TRUNCATED)
+
+  await planA(page).fill(tpcdsQ3)
+  await expect(parsedAs(page)).toHaveText('Parsed as formatted · 1 section')
+  await expect(page.getByText('Looks truncated')).toHaveCount(0)
+  expect(await findingTitles(page)).not.toContain(TRUNCATED)
 })
 
 test('plan A and plan B compare: the broadcast fix removes both shuffles and the finding', async ({ page }) => {

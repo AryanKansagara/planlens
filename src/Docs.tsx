@@ -25,6 +25,7 @@ export default function Docs() {
           <li><strong>Filter not pushed down</strong>: a predicate directly above a scan wraps the column in a function, CAST or Python UDF and is missing from <code>PushedFilters</code>.</li>
           <li><strong>Shuffled twice</strong>: two Exchanges on one path with the same hash keys, or a user <code>repartition()</code> undone by a later Exchange before any join or aggregate.</li>
           <li><strong>Wide read</strong>: 20 or more columns read from one scan.</li>
+          <li><strong>Plan looks truncated</strong>: the text ends inside a line or an open bracket, has logical plans but no <code>== Physical Plan ==</code>, or has an EXPLAIN FORMATTED operator or file scan whose details are missing (a scan without its <code>ReadSchema</code>). Scan findings for the cut-off part are not raised. A cut that falls exactly between two lines of a simple tree cannot be detected.</li>
           <li>Codegen stages are counted per <code>*(n)</code> id, separately inside each subquery.</li>
         </ul>
       </section>
