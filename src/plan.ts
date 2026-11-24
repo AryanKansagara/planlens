@@ -351,6 +351,10 @@ const dedent = (lines: string[]) => {
   return Number.isFinite(ind) && ind > 0 ? lines.map((l) => l.slice(Math.min(ind, /^ */.exec(l)![0].length))) : lines
 }
 
+/** Operators with no category of their own that still prove the text is a plan (Spark's SparkPlan / LogicalPlan names;
+ *  logical-plan names are printed with a leading ' while unresolved). */
+const OTHER_OPERATOR = /^(?:Photon\w*|Unresolved\w+|Union|UnionLoop|UnionLoopRef|Window|WindowGroupLimit|Generate|CollectLimit|CollectTail|GlobalLimit|LocalLimit|Limit|Offset|GlobalOffset|LocalOffset|Coalesce|Sample|Subquery|ReusedSubquery|SubqueryBroadcast|SubqueryAlias|Except|Intersect|Distinct|Deduplicate|Repartition|RepartitionByExpression|Execute|CommandResult|WriteFiles|[A-Z]\w*(?:Exec|Command))$/
+
 export function parsePlan(input: string): ParsedPlan {
   const lines = cleanInput(input)
   const raw: { title: string; lines: string[] }[] = []
@@ -382,8 +386,12 @@ export function parsePlan(input: string): ParsedPlan {
   const physical = (sections.find((s) => s.title === 'Physical Plan') ?? sections[0])?.root
   if (!physical) throw new Error('No plan found. Paste the output of df.explain(...), EXPLAIN [EXTENDED|FORMATTED|COST] <query>, or spark.sql("EXPLAIN ...").show(truncate=False).')
   let known = 0
-  walk(physical, (n) => { if (n.category !== 'other' && n.category !== 'header') known++ })
-  if (!known && !/[+:]- /.test(input)) throw new Error('This does not look like a Spark plan: no known operators (Scan, Filter, Join, Exchange, ...) were found.')
+  walk(physical, (n) => {
+    if (n.category === 'header') return
+    const op = /^'?([A-Za-z_][\w$]*)/.exec(n.text)?.[1] ?? ''
+    if (n.category !== 'other' || categorize(op) !== 'other' || OTHER_OPERATOR.test(op)) known++
+  })
+  if (!known) throw new Error('This does not look like a Spark plan: no known operators (Scan, Filter, Join, Exchange, ...) were found.')
   const logical = sections.find((s) => s.title === 'Optimized Logical Plan')?.root
   const hasStats = logical !== undefined && JSON.stringify(sections).includes('"sizeInBytes"')
   const mode = formatted ? 'formatted' : sections.some((s) => s.title === 'Parsed Logical Plan') ? 'extended' : hasStats ? 'cost' : 'simple'

@@ -103,6 +103,32 @@ test('text that is not a plan is rejected with guidance', () => {
   assert.throws(() => parsePlan('hello world\nnothing here'), /does not look like a Spark plan|No plan found/)
 })
 
+const NOT_A_PLAN = /does not look like a Spark plan/
+
+test('text that merely contains "+- " or ":- " lines is not accepted as a plan', () => {
+  for (const text of [
+    'Shopping list:\n+- eggs\n+- milk\n   +- 2% fat\n',
+    '== Physical Plan ==\nLorem ipsum dolor\n+- sit amet\n',
+    'Root\n+- Child\n   +- Grandchild\n',
+    'a\n:- b\n+- c',
+    '+- eggs',
+    '--- a/x\n+++ b/x\n@@ -1 +1 @@\n-foo\n+- bar\n',
+  ]) assert.throws(() => parsePlan(text), NOT_A_PLAN, text)
+})
+
+test('plans whose operators have no scan/filter/join/exchange category are still plans', () => {
+  for (const text of [
+    '== Physical Plan ==\nUnion\n:- Window [row_number() windowspecdefinition(a#1)]\n+- Window [rank()]\n',
+    '== Physical Plan ==\nCollectLimit 10\n+- Generate explode(arr#1), false, [x#2]\n',
+    '== Physical Plan ==\nGlobalLimit 21\n+- LocalLimit 21\n',
+    '== Physical Plan ==\nExecute CreateViewCommand\n   +- CreateViewCommand `v`, false\n',
+    "== Parsed Logical Plan ==\n'Project ['a]\n+- 'UnresolvedRelation [t]\n",
+    '== Optimized Logical Plan ==\nSubqueryAlias t\n+- LocalRelation [a#1]\n',
+    '== Physical Plan ==\nAdaptiveSparkPlan isFinalPlan=false\n+- == Initial Plan ==\n   Union\n   :- Window [a]\n   +- Window [b]\n',
+    '== Physical Plan ==\nPhotonResultStage\n+- PhotonShuffleMapStage\n',
+  ]) assert.ok(parsePlan(text).physical, text)
+})
+
 test('after execution only the Final Plan is counted, not the Initial Plan', () => {
   const p = parsePlan(`== Physical Plan ==
 AdaptiveSparkPlan isFinalPlan=true
