@@ -1,0 +1,13 @@
+== Physical Plan ==
+AdaptiveSparkPlan isFinalPlan=false
++- == Current Plan ==
+   HashAggregate(keys=[k#1], functions=[count(1)])
+   +- ShuffleQueryStage 0
+      +- Exchange hashpartitioning(k#1, 200), ENSURE_REQUIREMENTS, [plan_id=10]
+         +- *(1) HashAggregate(keys=[k#1], functions=[partial_count(1)])
+            +- *(1) Range (0, 100, step=1, splits=8)
++- == Initial Plan ==
+   HashAggregate(keys=[k#1], functions=[count(1)])
+   +- Exchange hashpartitioning(k#1, 200), ENSURE_REQUIREMENTS, [plan_id=5]
+      +- HashAggregate(keys=[k#1], functions=[partial_count(1)])
+         +- Range (0, 100, step=1, splits=8)
