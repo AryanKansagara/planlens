@@ -225,13 +225,21 @@ test('a plan that only has an Initial Plan is the plan, so its operators are cou
   expect(await findingTitles(page)).toEqual(['Adaptive plan not final (isFinalPlan=false)'])
 })
 
-// https://github.com/AryanKansagara/planlens/issues/4
-test('known bug #4: a running adaptive query counts the Current Plan once, not together with the Initial Plan', async ({ page }) => {
-  test.fail()
+test('a running adaptive query counts the Current Plan once, not together with the Initial Plan', async ({ page }) => {
   await openWith(page, aqeCurrent)
   await expect(stat(page, 'AQE')).toHaveText('initial')
   // Current Plan: HashAggregate, ShuffleQueryStage, Exchange, HashAggregate, Range + AdaptiveSparkPlan = 6.
-  expect(await counts(page)).toMatchObject({ Operators: '6', Scans: '1', Shuffles: '1' })
+  // The Initial Plan has its own 4 operators, one scan and one Exchange; none of them is running.
+  expect(await counts(page)).toMatchObject({ Operators: '6', Scans: '1', Shuffles: '1', 'Codegen stages': '1' })
+  await tab(page, /^Findings/).click()
+  expect(await findingTitles(page)).toEqual(['Adaptive plan not final (isFinalPlan=false)'])
+
+  // Both plans are visible in the tree, under their own headers.
+  await tab(page, 'Plan tree').click()
+  const names = await page.locator('.tree .name').allTextContents()
+  expect(names).toContain('Current Plan')
+  expect(names).toContain('Initial Plan')
+  expect(names.indexOf('Current Plan')).toBeLessThan(names.indexOf('Initial Plan'))
 })
 
 const NOT_A_PLAN = /^(This does not look like a Spark plan|No plan found)/
