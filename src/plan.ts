@@ -17,9 +17,18 @@ export interface PlanNode {
   table?: string
   stats?: Stats
   metrics?: Metric[]
+  /** The operator's own text or its detail block is cut off, so what was parsed of it cannot be judged. */
+  incomplete?: boolean
 }
 export interface PlanSection { title: string; root: PlanNode }
-export interface ParsedPlan { mode: 'simple' | 'extended' | 'cost' | 'formatted'; sections: PlanSection[]; physical: PlanNode; logical?: PlanNode }
+export interface ParsedPlan {
+  mode: 'simple' | 'extended' | 'cost' | 'formatted'
+  sections: PlanSection[]
+  physical: PlanNode
+  logical?: PlanNode
+  /** Why the text looks cut off (empty when it does not). A cut-off plan is analysed as far as it goes. */
+  truncated: string[]
+}
 export interface Finding {
   id: string
   severity: Severity
@@ -261,6 +270,10 @@ function finish(n: PlanNode) {
   }
   if (n.category === 'join' && !n.attrs['Join type'] && n.attrs.Arguments) parseJoinArgs(n.attrs.Arguments, n.attrs)
   if (n.category === 'scan' && !n.table && n.attrs.Location) n.table = /\[([^\],]+)/.exec(n.attrs.Location)?.[1]
+  // A FileScan / PhotonScan line (or a detail block with scan attributes) always ends with ReadSchema; without it the text was cut.
+  const scanLine = n.opId === undefined && /^(File|Photon)Scan /.test(n.name)
+  const scanAttrs = FILE_SCAN_ATTRS.some((k) => k in n.attrs) || (n.opId !== undefined && 'Output' in n.attrs)
+  if (isFileScan(n) && (scanLine || scanAttrs) && (!n.attrs.ReadSchema || cutSchema(n.attrs.ReadSchema))) n.incomplete = true
   n.children.forEach(finish)
 }
 
@@ -322,6 +335,9 @@ function parseFormatted(lines: string[], ctx: Ctx): PlanNode | undefined {
   const merge = (n: PlanNode) => {
     const d = n.opId === undefined ? undefined : details.get(n.opId)
     if (d) { Object.assign(n.attrs, d.attrs); if (d.codegen !== undefined) n.codegen = d.codegen }
+    // Every operator in the tree has a numbered detail block (some, like Union, have no lines in it). A missing one,
+    // or a file scan whose block stops after its title, was cut off.
+    if (n.opId !== undefined && (!d || (isFileScan(n) && !Object.keys(d.attrs).length))) n.incomplete = true
     if (n.opId !== undefined && !byId.has(n.opId)) byId.set(n.opId, n)
     n.children.forEach(merge)
   }
@@ -347,10 +363,55 @@ export function cleanInput(input: string): string[] {
   return lines
 }
 
+// Hive table scans print no ReadSchema, so they are left out.
+const isFileScan = (n: PlanNode) => /^(File|Photon)?Scan (?!hive\b)[a-z]/.test(n.name)
+// What a file scan prints besides ReadSchema; a scan that has some of these but no ReadSchema was cut off.
+const FILE_SCAN_ATTRS = ['Location', 'Format', 'Batched', 'DataFilters', 'PartitionFilters', 'PushedFilters']
+/** A ReadSchema value cut inside the schema: it does not end in ">" (or in Spark's own "..." shortening), or has more "<"
+ *  than ">" as in "struct<a:int,b:struct<c:int>". */
+const cutSchema = (v: string) =>
+  !/^struct<[\s\S]*(>|\.\.\.)$/.test(v) || (!v.endsWith('...') && (v.match(/</g)?.length ?? 0) > (v.match(/>/g)?.length ?? 0))
+
+/** True when `line` still has a bracket open at its end. A stray closing bracket is ignored (real plans print some). */
+function endsInsideBrackets(line: string): boolean {
+  let depth = 0
+  for (const c of line) {
+    if (OPEN.includes(c)) depth++
+    else if (CLOSE.includes(c)) depth = Math.max(0, depth - 1)
+  }
+  return depth > 0
+}
+
+/** Signs that the pasted text is only the start of a plan (clipboard limit, partial copy, truncated log).
+ *  A cut exactly at the end of a line of a simple tree leaves a complete-looking shorter plan, which cannot be told apart. */
+function truncationReasons(lines: string[], sections: PlanSection[]): string[] {
+  const out: string[] = []
+  const last = [...lines].reverse().find((l) => l.trim())
+  // Ends inside a bracket, or on a tree marker / codegen marker with no operator after it.
+  const bare = last?.replace(/^[\s:]*(?:[+:]?-|\+)?\s*/, '').replace(/^\*(?:\(\d+\))?\s*/, '')
+  if (last && (endsInsideBrackets(last) || bare === '')) out.push('The text ends in the middle of a line.')
+  if (!sections.some((s) => s.title === 'Physical Plan') && sections.some((s) => /Logical Plan/.test(s.title))) {
+    out.push('There is no "== Physical Plan ==" section, only logical plans, so nothing was checked for joins, shuffles or scans.')
+  }
+  let cutOps = 0, cutScans = 0
+  const visit = (n: PlanNode) => {
+    if (n.incomplete) { if (n.opId !== undefined) cutOps++; else if (isFileScan(n)) cutScans++ }
+    n.children.forEach(visit)
+  }
+  sections.forEach((s) => visit(s.root))
+  if (cutOps) out.push(`The details of ${cutOps} operator${cutOps === 1 ? ' is' : 's are'} missing or cut off.`)
+  if (cutScans) out.push(`${cutScans} scan${cutScans === 1 ? ' is' : 's are'} cut off before ReadSchema, so partition pruning and filter pushdown were not judged for ${cutScans === 1 ? 'it' : 'them'}.`)
+  return out
+}
+
 const dedent = (lines: string[]) => {
   const ind = Math.min(...lines.filter((l) => l.trim()).map((l) => /^ */.exec(l)![0].length))
   return Number.isFinite(ind) && ind > 0 ? lines.map((l) => l.slice(Math.min(ind, /^ */.exec(l)![0].length))) : lines
 }
+
+/** Operators with no category of their own that still prove the text is a plan (Spark's SparkPlan / LogicalPlan names;
+ *  logical-plan names are printed with a leading ' while unresolved). */
+const OTHER_OPERATOR = /^(?:Photon\w*|Unresolved\w+|Union|UnionLoop|UnionLoopRef|Window|WindowGroupLimit|Generate|CollectLimit|CollectTail|GlobalLimit|LocalLimit|Limit|Offset|GlobalOffset|LocalOffset|Coalesce|Sample|Subquery|ReusedSubquery|SubqueryBroadcast|SubqueryAlias|Except|Intersect|Distinct|Deduplicate|Repartition|RepartitionByExpression|Execute|CommandResult|WriteFiles|[A-Z]\w*(?:Exec|Command))$/
 
 export function parsePlan(input: string): ParsedPlan {
   const lines = cleanInput(input)
@@ -383,12 +444,16 @@ export function parsePlan(input: string): ParsedPlan {
   const physical = (sections.find((s) => s.title === 'Physical Plan') ?? sections[0])?.root
   if (!physical) throw new Error('No plan found. Paste the output of df.explain(...), EXPLAIN [EXTENDED|FORMATTED|COST] <query>, or spark.sql("EXPLAIN ...").show(truncate=False).')
   let known = 0
-  walk(physical, (n) => { if (n.category !== 'other' && n.category !== 'header') known++ })
-  if (!known && !/[+:]- /.test(input)) throw new Error('This does not look like a Spark plan: no known operators (Scan, Filter, Join, Exchange, ...) were found.')
+  walk(physical, (n) => {
+    if (n.category === 'header') return
+    const op = /^'?([A-Za-z_][\w$]*)/.exec(n.text)?.[1] ?? ''
+    if (n.category !== 'other' || categorize(op) !== 'other' || OTHER_OPERATOR.test(op)) known++
+  })
+  if (!known) throw new Error('This does not look like a Spark plan: no known operators (Scan, Filter, Join, Exchange, ...) were found.')
   const logical = sections.find((s) => s.title === 'Optimized Logical Plan')?.root
   const hasStats = logical !== undefined && JSON.stringify(sections).includes('"sizeInBytes"')
   const mode = formatted ? 'formatted' : sections.some((s) => s.title === 'Parsed Logical Plan') ? 'extended' : hasStats ? 'cost' : 'simple'
-  return { mode, sections, physical, logical }
+  return { mode, sections, physical, logical, truncated: truncationReasons(lines, sections) }
 }
 
 // ---------- analysis ----------
@@ -485,11 +550,20 @@ function sideSize(side: PlanNode, logical?: PlanNode): number | undefined {
 const SMALL_SIDE = 64 * 2 ** 20
 const WIDE_READ = 20
 
-export function analyze(plan: { physical: PlanNode; logical?: PlanNode }): Finding[] {
+export function analyze(plan: { physical: PlanNode; logical?: PlanNode; truncated?: string[] }): Finding[] {
   const root = plan.physical
   const out: Finding[] = []
   const add = (f: Finding) => { if (!out.some((o) => o.id === f.id)) out.push(f) }
   const summary = summarize(root)
+
+  if (plan.truncated?.length) {
+    add({
+      id: 'truncated', severity: 'warn', nodes: [],
+      title: 'Plan looks truncated: the analysis is partial',
+      detail: `${plan.truncated.join(' ')} Findings that depend on the missing part were not raised, and a plan with no findings here is not a clean bill of health.`,
+      fix: `# Copy the complete output, not just the start of it\ndf.explain(mode="formatted")   # or extended / cost\n\n-- spark-sql / notebook\nEXPLAIN FORMATTED SELECT ...`,
+    })
+  }
 
   // Cartesian / nested loop joins
   for (const j of all(root, (n) => /^(CartesianProduct|BroadcastNestedLoopJoin)$/.test(n.name))) {
@@ -536,6 +610,7 @@ export function analyze(plan: { physical: PlanNode; logical?: PlanNode }): Findi
   const pushedTables: string[] = []
   const prunedTables: string[] = []
   for (const s of all(root, isScan)) {
+    if (s.incomplete) continue // cut off before ReadSchema / PartitionFilters: nothing reliable to judge
     const t = s.table!
     const pushed = listOf(s.attrs.PushedFilters).filter((p) => !/^IsNotNull\(/.test(p))
     if (pushed.length) pushedTables.push(shortName(t))
@@ -571,7 +646,7 @@ export function analyze(plan: { physical: PlanNode; logical?: PlanNode }): Findi
   for (const f of all(root, (n) => /^(Photon)?Filter$/.test(n.name))) {
     let below = f.children[0]
     while (below && below.children.length === 1 && !isScan(below) && ['filter', 'python', 'other'].includes(below.category)) below = below.children[0]
-    if (!below || !isScan(below)) continue
+    if (!below || !isScan(below) || below.incomplete) continue
     const cond = f.attrs.Condition ?? ''
     const preds = conjuncts(cond).filter((c) => !/^isnotnull\(/i.test(c))
     const pushed = listOf(below.attrs.PushedFilters).filter((p) => !/^IsNotNull\(/.test(p))

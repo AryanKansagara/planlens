@@ -460,6 +460,7 @@ export default function Tool() {
             {plan && !parsedA.error && (
               <span className="muted" style={{ fontSize: 13 }}>
                 Parsed as <strong>{plan.mode}</strong> · {plan.sections.length} section{plan.sections.length === 1 ? '' : 's'}
+                {plan.truncated.length > 0 && <> · <span className="badge warn">Looks truncated</span></>}
               </span>
             )}
           </label>
@@ -476,6 +477,7 @@ export default function Tool() {
             {parsedB.plan && !parsedB.error && (
               <span className="muted" style={{ fontSize: 13 }}>
                 Parsed as <strong>{parsedB.plan.mode}</strong>
+                {parsedB.plan.truncated.length > 0 && <> · <span className="badge warn">Looks truncated</span></>}
                 {' · '}
                 <button className="btn ghost sm" type="button" onClick={() => setTab('compare')}>Open compare</button>
               </span>
