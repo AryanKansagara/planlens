@@ -131,6 +131,32 @@ test('text that is not a plan is rejected with guidance', () => {
   assert.throws(() => parsePlan('hello world\nnothing here'), /does not look like a Spark plan|No plan found/)
 })
 
+const NOT_A_PLAN = /does not look like a Spark plan/
+
+test('text that merely contains "+- " or ":- " lines is not accepted as a plan', () => {
+  for (const text of [
+    'Shopping list:\n+- eggs\n+- milk\n   +- 2% fat\n',
+    '== Physical Plan ==\nLorem ipsum dolor\n+- sit amet\n',
+    'Root\n+- Child\n   +- Grandchild\n',
+    'a\n:- b\n+- c',
+    '+- eggs',
+    '--- a/x\n+++ b/x\n@@ -1 +1 @@\n-foo\n+- bar\n',
+  ]) assert.throws(() => parsePlan(text), NOT_A_PLAN, text)
+})
+
+test('plans whose operators have no scan/filter/join/exchange category are still plans', () => {
+  for (const text of [
+    '== Physical Plan ==\nUnion\n:- Window [row_number() windowspecdefinition(a#1)]\n+- Window [rank()]\n',
+    '== Physical Plan ==\nCollectLimit 10\n+- Generate explode(arr#1), false, [x#2]\n',
+    '== Physical Plan ==\nGlobalLimit 21\n+- LocalLimit 21\n',
+    '== Physical Plan ==\nExecute CreateViewCommand\n   +- CreateViewCommand `v`, false\n',
+    "== Parsed Logical Plan ==\n'Project ['a]\n+- 'UnresolvedRelation [t]\n",
+    '== Optimized Logical Plan ==\nSubqueryAlias t\n+- LocalRelation [a#1]\n',
+    '== Physical Plan ==\nAdaptiveSparkPlan isFinalPlan=false\n+- == Initial Plan ==\n   Union\n   :- Window [a]\n   +- Window [b]\n',
+    '== Physical Plan ==\nPhotonResultStage\n+- PhotonShuffleMapStage\n',
+  ]) assert.ok(parsePlan(text).physical, text)
+})
+
 test('after execution only the Final Plan is counted, not the Initial Plan', () => {
   const p = parsePlan(`== Physical Plan ==
 AdaptiveSparkPlan isFinalPlan=true
@@ -148,5 +174,78 @@ AdaptiveSparkPlan isFinalPlan=true
          +- Range (0, 100, step=1, splits=8)`)
   const s = summarize(p.physical)
   assert.equal(s.aqe, 'final')
+  assert.equal(s.shuffles, 1)
+})
+
+const CURRENT = `== Physical Plan ==
+AdaptiveSparkPlan isFinalPlan=false
++- == Current Plan ==
+   HashAggregate(keys=[k#1], functions=[count(1)])
+   +- ShuffleQueryStage 0
+      +- Exchange hashpartitioning(k#1, 200), ENSURE_REQUIREMENTS, [plan_id=10]
+         +- *(1) HashAggregate(keys=[k#1], functions=[partial_count(1)])
+            +- *(1) Range (0, 100, step=1, splits=8)
++- == Initial Plan ==
+   HashAggregate(keys=[k#1], functions=[count(1)])
+   +- Exchange hashpartitioning(k#1, 200), ENSURE_REQUIREMENTS, [plan_id=5]
+      +- HashAggregate(keys=[k#1], functions=[partial_count(1)])
+         +- Range (0, 100, step=1, splits=8)`
+
+test('while a query runs only the Current Plan is counted, not the Initial Plan', () => {
+  const s = summarize(parsePlan(CURRENT).physical)
+  assert.equal(s.aqe, 'initial')
+  assert.equal(s.operators, 6) // AdaptiveSparkPlan + the 5 operators of the Current Plan
+  assert.equal(s.scans, 1)
+  assert.equal(s.shuffles, 1)
+  assert.equal(s.codegenStages, 1)
+  // The same query without its Initial Plan section gives the same numbers.
+  const without = summarize(parsePlan(CURRENT.slice(0, CURRENT.indexOf('+- == Initial Plan =='))).physical)
+  assert.deepEqual(without, s)
+})
+
+test('the Initial Plan stays in the tree next to the Current Plan, but never reaches an analysis', () => {
+  const p = parsePlan(CURRENT)
+  const headers = p.physical.children.map((c) => c.name)
+  assert.deepEqual(headers, ['Current Plan', 'Initial Plan'])
+  const names: string[] = []
+  walk(p.physical, (n) => { names.push(n.name) })
+  assert.equal(names.filter((n) => n === 'Range').length, 1)
+  assert.equal(names.filter((n) => n === 'Exchange').length, 1)
+})
+
+test('a Current Plan is judged on its own: findings from the Initial Plan are not raised', () => {
+  // The Initial Plan sort-merge joins a small table; the Current Plan already broadcasts it.
+  const p = parsePlan(`== Physical Plan ==
+AdaptiveSparkPlan isFinalPlan=false
++- == Current Plan ==
+   BroadcastHashJoin [id#1], [id#2], Inner, BuildRight, false
+   :- Scan parquet db.big[id#1] Batched: true, DataFilters: [], Format: Parquet, Location: InMemoryFileIndex(1 paths)[file:/b], PartitionFilters: [], PushedFilters: [], ReadSchema: struct<id:int>
+   +- BroadcastQueryStage 0
+      +- BroadcastExchange HashedRelationBroadcastMode(List(input[0, int, false]),false), [plan_id=3]
+         +- Scan parquet db.dim[id#2] Batched: true, DataFilters: [], Format: Parquet, Location: InMemoryFileIndex(1 paths)[file:/d], PartitionFilters: [], PushedFilters: [], ReadSchema: struct<id:int>
++- == Initial Plan ==
+   SortMergeJoin [id#1], [id#2], Inner
+   :- Sort [id#1 ASC NULLS FIRST], false, 0
+   :  +- Exchange hashpartitioning(id#1, 200), ENSURE_REQUIREMENTS, [plan_id=1]
+   :     +- Scan parquet db.big[id#1] Batched: true, DataFilters: [], Format: Parquet, Location: InMemoryFileIndex(1 paths)[file:/b], PartitionFilters: [], PushedFilters: [], ReadSchema: struct<id:int>
+   +- Sort [id#2 ASC NULLS FIRST], false, 0
+      +- Exchange hashpartitioning(id#2, 200), ENSURE_REQUIREMENTS, [plan_id=2]
+         +- Scan parquet db.dim[id#2] Batched: true, DataFilters: [], Format: Parquet, Location: InMemoryFileIndex(1 paths)[file:/d], PartitionFilters: [], PushedFilters: [], ReadSchema: struct<id:int>`)
+  const ids = analyze(p).map((f) => f.id)
+  assert.ok(ids.includes('good-bhj'))
+  assert.ok(!ids.some((i) => i.startsWith('smj-')))
+  assert.equal(summarize(p.physical).sorts, 0)
+})
+
+test('an empty Current Plan next to an Initial Plan leaves the Initial Plan as the only plan', () => {
+  const p = parsePlan(`== Physical Plan ==
+AdaptiveSparkPlan isFinalPlan=false
++- == Current Plan ==
++- == Initial Plan ==
+   HashAggregate(keys=[k#1], functions=[count(1)])
+   +- Exchange hashpartitioning(k#1, 200), ENSURE_REQUIREMENTS, [plan_id=5]
+      +- Range (0, 100, step=1, splits=8)`)
+  const s = summarize(p.physical)
+  assert.equal(s.operators, 4)
   assert.equal(s.shuffles, 1)
 })

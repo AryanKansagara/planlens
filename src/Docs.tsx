@@ -12,7 +12,7 @@ export default function Docs() {
         <ul className="advice">
           <li><code>df.explain()</code> / <code>EXPLAIN</code> (physical plan only), <code>explain(True)</code> / <code>EXPLAIN EXTENDED</code> (parsed, analyzed, optimized and physical plans), <code>explain(mode="cost")</code> / <code>EXPLAIN COST</code> (with <code>Statistics(sizeInBytes=…, rowCount=…)</code>) and <code>explain(mode="formatted")</code> / <code>EXPLAIN FORMATTED</code> (operator outline plus numbered details and subqueries).</li>
           <li>Console wrappers are removed for you: the <code>+----+</code> / <code>| plan |</code> table from spark-sql and <code>spark.sql("EXPLAIN …").show(truncate=False)</code>, a shared indent, and the prompt line before the first <code>== … ==</code> header.</li>
-          <li>Adaptive plans: <code>AdaptiveSparkPlan isFinalPlan=false</code> before a run, and <code>== Final Plan ==</code> / <code>== Initial Plan ==</code> after one. When both are present only the final plan is counted.</li>
+          <li>Adaptive plans: <code>AdaptiveSparkPlan isFinalPlan=false</code> before a run, and <code>== Final Plan ==</code> / <code>== Initial Plan ==</code> after one, or <code>== Current Plan ==</code> / <code>== Initial Plan ==</code> while a query is still running. Next to a final or current plan, the initial plan never ran and is not counted.</li>
           <li>Databricks Photon operators (<code>PhotonScan</code>, <code>PhotonFilter</code>, <code>PhotonGroupingAgg</code>, <code>PhotonShuffleExchangeSink/Source</code>, <code>PhotonBroadcastHashJoin</code>). A shuffle is counted once, at its sink.</li>
           <li>Not supported: Spark event logs and Query Profile JSON. Copy the plan text from the SQL tab or Query Profile instead.</li>
         </ul>
@@ -25,6 +25,7 @@ export default function Docs() {
           <li><strong>Filter not pushed down</strong>: a predicate directly above a scan wraps the column in a function, CAST or Python UDF and is missing from <code>PushedFilters</code>.</li>
           <li><strong>Shuffled twice</strong>: two Exchanges on one path with the same hash keys, or a user <code>repartition()</code> undone by a later Exchange before any join or aggregate.</li>
           <li><strong>Wide read</strong>: 20 or more columns read from one scan.</li>
+          <li><strong>Plan looks truncated</strong>: the text ends inside a line or an open bracket, has logical plans but no <code>== Physical Plan ==</code>, or has an EXPLAIN FORMATTED operator or file scan whose details are missing (a scan without its <code>ReadSchema</code>). Scan findings for the cut-off part are not raised. A cut that falls exactly between two lines of a simple tree cannot be detected.</li>
           <li>Codegen stages are counted per <code>*(n)</code> id, separately inside each subquery.</li>
         </ul>
       </section>
