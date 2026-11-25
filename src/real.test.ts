@@ -46,6 +46,34 @@ test('bordered EXPLAIN table output (spark-sql / show()) parses like plain text'
   assert.equal(p.physical.children[0].attrs.Partitioning, 'hashpartitioning(k#33, 200)')
 })
 
+const docsExtended = readFileSync(new URL('../e2e/plans/spark-docs-extended.txt', import.meta.url), 'utf8')
+
+// The "Using Extended" example on https://spark.apache.org/docs/latest/sql-ref-syntax-qry-explain.html indents its last
+// operator by 4 spaces under a parent indented by 3.
+test('an operator line indented off the three-column grid is still an operator', () => {
+  const p = parsePlan(docsExtended)
+  const phys = p.physical
+  assert.deepEqual(phys.children[0].children[0].children.map((c) => c.name), ['LocalTableScan'])
+  const names: string[] = []
+  walk(phys, (n) => { names.push(n.name) })
+  assert.deepEqual(names, ['HashAggregate', 'Exchange', 'HashAggregate', 'LocalTableScan'])
+  const scan = phys.children[0].children[0].children[0]
+  assert.equal(scan.category, 'scan')
+  assert.equal(scan.codegen, 1)
+  assert.equal(summarize(phys).codegenStages, 2)
+})
+
+test('operators indented one or two spaces off the grid still nest under the operator above', () => {
+  for (const shift of [1, 2]) {
+    const pad = ' '.repeat(shift)
+    const p = parsePlan(`== Physical Plan ==\n*(2) HashAggregate(keys=[k#1], functions=[count(1)])\n+- Exchange hashpartitioning(k#1, 200), true, [id=#9]\n${pad}   +- *(1) Project [k#1]\n${pad}      +- *(1) Range (0, 10, step=1, splits=8)`)
+    const names: string[] = []
+    walk(p.physical, (n) => { names.push(n.name) })
+    assert.deepEqual(names, ['HashAggregate', 'Exchange', 'Project', 'Range'], `shift ${shift}`)
+    assert.equal(p.physical.children[0].children[0].children[0].name, 'Range')
+  }
+})
+
 test('show(truncate=False) cell with | only on the first and last line', () => {
   const p = parsePlan('|== Physical Plan ==\n*(1) Project [id#0L]\n+- *(1) Range (0, 10, step=1, splits=8)|')
   assert.equal(p.physical.name, 'Project')

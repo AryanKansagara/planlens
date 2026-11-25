@@ -284,14 +284,16 @@ function parseTree(lines: string[], ctx: Ctx, formatted = false): PlanNode | und
   const roots: PlanNode[] = []
   for (const line of lines) {
     if (!line.trim()) continue
-    const m = /^((?: {3}|: {2})*)([+:]- )?(.*)$/.exec(line.replace(/\s+$/, ''))!
-    const leading = m[1].length + /^ */.exec(m[3])![0].length
-    const col = leading + (m[2] ? 3 : 1) // marker-less lines nest under a header at the same column
-    const node = buildNode(m[3], ctx, formatted)
+    // Spark indents by three columns, but hand-edited or re-wrapped text (e.g. the EXTENDED example in the Spark docs)
+    // can be off that grid, so spaces between the grid and the "+- " / ":- " marker are tolerated.
+    const m = /^((?: {3}|: {2})*)( *)([+:]- )?(.*)$/.exec(line.replace(/\s+$/, ''))!
+    const leading = m[1].length + m[2].length + /^ */.exec(m[4])![0].length
+    const col = leading + (m[3] ? 3 : 1) // marker-less lines nest under a header at the same column
+    const node = buildNode(m[4], ctx, formatted)
     while (stack.length && stack[stack.length - 1].col >= col) stack.pop()
     if (stack.length) stack[stack.length - 1].node.children.push(node)
     else roots.push(node)
-    stack.push({ col: m[2] ? col : leading, node })
+    stack.push({ col: m[3] ? col : leading, node })
   }
   if (roots.length <= 1) return roots[0]
   return { key: ctx.next++, name: 'Plan', text: '', category: 'header', attrs: {}, children: roots }

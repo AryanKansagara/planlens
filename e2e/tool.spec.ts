@@ -146,7 +146,7 @@ test('paste EXPLAIN EXTENDED from the Spark docs (parsed, analyzed, optimized, p
   // Counts come from the physical plan, not from the three logical plans above it.
   expect(await counts(page)).toMatchObject({ Operators: '4', Scans: '1', Shuffles: '1', 'Codegen stages': '2', AQE: 'off' })
   await tab(page, 'Plan tree').click()
-  // The docs page indents the last operator of this example by one space too many; see the test below for the name it gets.
+  // The docs page indents the last operator of this example by one space too many; it must still be read as the scan.
   await expect(page.locator('.tree .name').nth(0)).toHaveText('HashAggregate')
   await expect(page.locator('.tree .name').nth(1)).toHaveText('Exchange')
   await expect(page.locator('.tree .name').nth(2)).toHaveText('HashAggregate')
@@ -155,12 +155,17 @@ test('paste EXPLAIN EXTENDED from the Spark docs (parsed, analyzed, optimized, p
   await expect(detailFor(page, 'Exchange')).toContainText('hashpartitioning(k#47, 200)')
 })
 
-// https://github.com/AryanKansagara/planlens/issues/5
-test('known bug #5: an operator line indented one space off still gets its operator name', async ({ page }) => {
-  test.fail()
+test('an operator line indented one space off still gets its operator name and parent', async ({ page }) => {
   await openWith(page, docsExtended)
   await tab(page, 'Plan tree').click()
-  await expect(page.locator('.tree .name').nth(3)).toHaveText('LocalTableScan')
+  await expect(page.locator('.tree .name')).toHaveText(['HashAggregate', 'Exchange', 'HashAggregate', 'LocalTableScan'])
+  await expect(page.locator('.tree')).not.toContainText('+- ')
+  // The scan is a child of the inner HashAggregate and keeps its codegen stage and category.
+  const scan = page.locator('.tree .node', { hasText: 'LocalTableScan' })
+  await expect(scan).toContainText('cg 1')
+  await expect(scan).toContainText('scan')
+  await scan.click()
+  await expect(detailFor(page, 'LocalTableScan')).toContainText('[k#47, v#48]')
 })
 
 test('paste EXPLAIN FORMATTED from the Spark docs', async ({ page }) => {
